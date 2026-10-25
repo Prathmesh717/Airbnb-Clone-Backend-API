@@ -1,0 +1,251 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  GUEST
+  HOST
+  ADMIN
+}
+
+enum ListingStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  DECLINED
+  COMPLETED
+}
+
+enum PaymentStatus {
+  REQUIRES_ACTION
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum MessageThreadStatus {
+  OPEN
+  CLOSED
+}
+
+model User {
+  id                 String          @id @default(cuid())
+  name               String?
+  email              String?         @unique
+  emailVerified      DateTime?
+  image              String?
+  passwordHash       String?
+  role               Role            @default(GUEST)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  accounts           Account[]
+  sessions           Session[]
+  listings           Listing[]       @relation("HostListings")
+  favorites          Favorite[]
+  reviews            Review[]
+  reservations       Reservation[]   @relation("GuestReservations")
+  hostedReservations Reservation[]   @relation("HostReservations")
+  authoredMessages   Message[]       @relation("AuthoredMessages")
+  guestThreads       MessageThread[] @relation("GuestThreads")
+  hostThreads        MessageThread[] @relation("HostThreads")
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Listing {
+  id             String                                 @id @default(cuid())
+  hostId         String
+  title          String
+  description    String                                 @db.Text
+  propertyType   String
+  roomType       String
+  address        String
+  city           String
+  country        String
+  latitude       Float
+  longitude      Float
+  location       Unsupported("geography(Point, 4326)")?
+  pricePerNight  Int
+  cleaningFee    Int                                    @default(0)
+  serviceFee     Int                                    @default(0)
+  maxGuests      Int
+  bedrooms       Int                                    @default(1)
+  beds           Int                                    @default(1)
+  bathrooms      Float                                  @default(1)
+  amenities      Json?
+  status         ListingStatus                          @default(DRAFT)
+  createdAt      DateTime                               @default(now())
+  updatedAt      DateTime                               @updatedAt
+  host           User                                   @relation("HostListings", fields: [hostId], references: [id], onDelete: Cascade)
+  images         ListingImage[]
+  favorites      Favorite[]
+  reviews        Review[]
+  reservations   Reservation[]
+  messageThreads MessageThread[]
+
+  @@index([hostId])
+  @@index([city])
+  @@index([status])
+  @@index([pricePerNight])
+}
+
+model ListingImage {
+  id        String  @id @default(cuid())
+  listingId String
+  url       String
+  alt       String?
+  sortOrder Int     @default(0)
+  listing   Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, sortOrder])
+}
+
+model Favorite {
+  userId    String
+  listingId String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@id([userId, listingId])
+  @@index([listingId])
+}
+
+model Review {
+  id            String       @id @default(cuid())
+  listingId     String
+  authorId      String
+  reservationId String?
+  rating        Int
+  comment       String       @db.Text
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  listing       Listing      @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  author        User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  reservation   Reservation? @relation(fields: [reservationId], references: [id], onDelete: SetNull)
+
+  @@unique([listingId, authorId])
+  @@index([listingId, createdAt])
+}
+
+model Reservation {
+  id          String            @id @default(cuid())
+  listingId   String
+  guestId     String
+  hostId      String
+  checkIn     DateTime
+  checkOut    DateTime
+  guests      Int
+  status      ReservationStatus @default(PENDING)
+  currency    String            @default("USD")
+  nightlyRate Int
+  nights      Int
+  subtotal    Int
+  cleaningFee Int
+  serviceFee  Int
+  taxes       Int
+  total       Int
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  listing     Listing           @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  guest       User              @relation("GuestReservations", fields: [guestId], references: [id], onDelete: Cascade)
+  host        User              @relation("HostReservations", fields: [hostId], references: [id], onDelete: Cascade)
+  payments    Payment[]
+  reviews     Review[]
+
+  @@index([listingId, checkIn, checkOut])
+  @@index([guestId, status])
+  @@index([hostId, status])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  reservationId         String
+  provider              String        @default("stripe")
+  stripePaymentIntentId String        @unique
+  amount                Int
+  currency              String
+  status                PaymentStatus @default(REQUIRES_ACTION)
+  metadata              Json?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  reservation           Reservation   @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+
+  @@index([reservationId, status])
+}
+
+model MessageThread {
+  id        String              @id @default(cuid())
+  listingId String
+  guestId   String
+  hostId    String
+  status    MessageThreadStatus @default(OPEN)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  listing   Listing             @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  guest     User                @relation("GuestThreads", fields: [guestId], references: [id], onDelete: Cascade)
+  host      User                @relation("HostThreads", fields: [hostId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@unique([listingId, guestId, hostId])
+  @@index([guestId, updatedAt])
+  @@index([hostId, updatedAt])
+}
+
+model Message {
+  id        String        @id @default(cuid())
+  threadId  String
+  senderId  String
+  body      String        @db.Text
+  readAt    DateTime?
+  createdAt DateTime      @default(now())
+  thread    MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender    User          @relation("AuthoredMessages", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([threadId, createdAt])
+}
